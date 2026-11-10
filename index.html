@@ -706,6 +706,12 @@ async function initComunas(){
   throw Error('No se detectó subcapa poligonal con nombre comunal');
  }catch(e){console.warn('Comunas:',e);}
 }
+// Equivalencia de nombres entre Pronostico_Municipios.NOM_COM y Comunas.COMUNA.
+// Se usa solo al comparar el polígono; no cambia los nombres visibles ni los datos de AGOL.
+function normalizeNombreComunaParaPoligono(value){
+ const normalized=normalize(value);
+ return normalized==='AYSEN'||normalized==='AISEN'?'AISEN':normalized;
+}
 async function highlightComuna(name,token){
  // La búsqueda y los datos provienen siempre de Pronostico_Municipios.NOM_COM.
  // La capa Comunas se consulta ÚNICAMENTE por su campo COMUNA para obtener el polígono.
@@ -731,7 +737,7 @@ async function highlightComuna(name,token){
    if(token!==requestId){clearComunaSelection();return null;}
    const batch=r.features||[];
    for(const f of batch){
-    if(normalize(f.attributes[field])===normalize(name))matches.push(f);
+    if(normalizeNombreComunaParaPoligono(f.attributes[field])===normalizeNombreComunaParaPoligono(name))matches.push(f);
    }
    if(batch.length<q.num)break;
    q.start+=batch.length;
@@ -947,14 +953,19 @@ function pickForecast(records){
 }
 function format(v,unit){return v==null||v===''||!Number.isFinite(Number(v))?'—':Number(v).toLocaleString('es-CL',{maximumFractionDigits:1})+unit;}
 function iconUrl(condition){return ICONS+encodeURIComponent(String(condition).trim().replace(/ /g,'_')+'.png');}
-function makeCard(key){const el=document.createElement('div');el.className='forecast-card';const title=document.createElement('h3');title.textContent=display[key];el.append(title);const content=document.createElement('div');el.append(content);$('cards').append(el);cards.set(key,{el,content});}
+function makeCard(key){const el=document.createElement('div');el.className='forecast-card';const title=document.createElement('h3');title.textContent='';el.append(title);const content=document.createElement('div');el.append(content);$('cards').append(el);cards.set(key,{el,content});}
 function drawCard(key){
  const card=cards.get(key);if(!card)return;
  const {record,reason,fallback}=pickForecast(results.get(key)||[]);
  card.content.replaceChildren();
- if(!record){const p=document.createElement('div');p.className='no-data';p.textContent=reason;card.content.append(p);return;}
+ if(!record){
+  // El título nunca se obtiene del diccionario local: usar NOM_COM del servicio si existe.
+  const nombreServicio=(results.get(key)||[]).map(a=>String(a.NOM_COM||'').trim()).find(Boolean);
+  card.el.querySelector('h3').textContent=nombreServicio||'Comuna no disponible';
+  const p=document.createElement('div');p.className='no-data';p.textContent=reason;card.content.append(p);return;
+ }
  // El nombre visible proviene de NOM_COM, no del catálogo de ubicaciones.
- card.el.querySelector('h3').textContent=(key==='__search'&&normalize(record.NOM_COM).includes('ANTART'))?'Antártica - Isla Rey Jorge':(record.NOM_COM||display[key]);
+ card.el.querySelector('h3').textContent=(key==='__search'&&normalize(record.NOM_COM).includes('ANTART'))?'Antártica - Isla Rey Jorge':(String(record.NOM_COM||'').trim()||'Comuna no disponible');
  if(fallback){card.el.title=reason;}else{card.el.removeAttribute('title');}
  const cond=record.COND_ATM||'Sin condición';
  const top=document.createElement('div');top.className='cnn-summary';
@@ -1034,10 +1045,10 @@ function setZoneCardsVisible(visible){
  updateZoneButtons();
 }
 
-async function loadZone(z){$('cards').classList.toggle('zone-centro',z==='centro');if(z!=='__search'){previousZone=z;clearComunaSelection();$('cards').classList.remove('search-mode');}zone=z;setZoneCardsVisible(true);$('cards').scrollTop=0;const id=++requestId;results.clear();cards.forEach(c=>c.el.remove());cards.clear();clearLeaders();groups[z].forEach(makeCard);status('Consultando '+groups[z].length+' municipios de '+z+'...');schedulePosition();
+async function loadZone(z){$('cards').classList.toggle('zone-centro',z==='centro');if(z!=='__search'){previousZone=z;clearComunaSelection();$('cards').classList.remove('search-mode');}zone=z;setZoneCardsVisible(true);$('cards').scrollTop=0;const id=++requestId;results.clear();cards.forEach(c=>c.el.remove());cards.clear();clearLeaders();status('Consultando '+groups[z].length+' municipios de '+z+'...');schedulePosition();
 highlightRegions(z).catch(console.warn);try{await flyToZone(z);}catch(e){console.warn('Navegación de zona:',e);}if(id!==requestId)return;
 const data=await Promise.all(groups[z].map(async key=>{try{return [key,await queryCity(key),null];}catch(e){return [key,[],e];}}));if(id!==requestId)return;
-let found=0,valid=0,failed=0;for(const [key,records,error] of data){results.set(key,records);if(records.length)found++;if(error)failed++;if(pickForecast(records).record)valid++;drawCard(key);}schedulePosition();
+let found=0,valid=0,failed=0;for(const [key,records,error] of data){results.set(key,records);makeCard(key);if(records.length)found++;if(error)failed++;if(pickForecast(records).record)valid++;drawCard(key);}schedulePosition();
 refreshSelectedPoints(groups[z],id);status('Zona: '+z+'\nRegistros consultados: '+(allMunicipalRows?.length??0)+'\nMunicipios encontrados: '+found+'/'+groups[z].length+'\nCon pronóstico diario para '+daySelected()+': '+valid+'/'+groups[z].length+'\nConsultas fallidas: '+failed+'\nLas fichas muestran datos diarios y señalan expresamente si corresponden a otra fecha.');}
 function refreshTime(){refreshTiles();updateTimeline();refreshSelectedPoints(groups[zone],requestId);let valid=0;for(const key of groups[zone]){drawCard(key);if(pickForecast(results.get(key)||[]).record)valid++;}status('Zona: '+zone+'\nFichas con pronóstico diario para '+daySelected()+': '+valid+'/'+groups[zone].length+'\nLa hora solo modifica las teselas WeatherAPI.');schedulePosition();}
 // V33: el día seleccionado corresponde a la fecha civil de Chile continental.
